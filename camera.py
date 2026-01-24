@@ -17,7 +17,7 @@ os.environ["PATH"] = dll_dir + ";" + os.environ.get("PATH", "")
 
 from MVS.MvCameraControl_class import *
 
-def cam_config(cam: MvCamera, stDevInfo):
+def cam_config(cam: MvCamera, stDevInfo, FPS: float):
     cam.MV_CC_CreateHandle(stDevInfo)
     cam.MV_CC_OpenDevice(MV_ACCESS_Exclusive, 0)
 
@@ -28,8 +28,14 @@ def cam_config(cam: MvCamera, stDevInfo):
 
     cam.MV_CC_SetEnumValue("BalanceWhiteAuto", 2) 
 
-
     cam.MV_CC_StartGrabbing()
+
+    cam.MV_CC_SetEnumValue("TriggerMode", 0)
+
+    cam.MV_CC_SetBoolValue("AcquisitionFrameRateEnable", True)
+
+    cam.MV_CC_SetFloatValue("AcquisitionFrameRate", FPS)
+
 
 def main():
     deviceList = MV_CC_DEVICE_INFO_LIST()
@@ -42,7 +48,8 @@ def main():
     stFrameInfo = MV_FRAME_OUT_INFO_EX()
     
     cam = MvCamera()
-    cam_config(cam, stDevInfo)
+    FPS = 60.0 #ENTER Hz HERE 
+    cam_config(cam, stDevInfo, FPS)
 
     payload = MVCC_INTVALUE()
     cam.MV_CC_GetIntValue("PayloadSize", payload)
@@ -68,7 +75,6 @@ def main():
     cam.MV_CC_CloseDevice()
     cam.MV_CC_DestroyHandle()
     cv2.destroyAllWindows()
-
 
 if __name__ == "__main__":
     main()
