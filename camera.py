@@ -36,7 +36,6 @@ def cam_config(cam: MvCamera, stDevInfo, FPS: float):
 
     cam.MV_CC_SetFloatValue("AcquisitionFrameRate", FPS)
 
-
 def main():
     deviceList = MV_CC_DEVICE_INFO_LIST()
     ret = MvCamera.MV_CC_EnumDevices(MV_USB_DEVICE, deviceList)
