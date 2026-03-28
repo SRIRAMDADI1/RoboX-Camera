@@ -34,16 +34,19 @@ BEST_HUE_MIN, BEST_HUE_MAX = 85, 118
 BEST_SAT_MIN, BEST_VAL_MIN = 90, 190
 ENV_V_DELTA = 18
 VAL_ABSOLUTE = 248
-IMAGE_ENV_NAME = "image_env.png"
+IMAGE_ENV_NAME = "image_env1.png"
 
 
 def cam_config(cam: MvCamera, stDevInfo, FPS: float):
     cam.MV_CC_CreateHandle(stDevInfo)
     cam.MV_CC_OpenDevice(MV_ACCESS_Exclusive, 0)
     cam.MV_CC_SetEnumValue("PixelFormat", PixelType_Gvsp_RGB8_Packed)
-    cam.MV_CC_SetEnumValue("ExposureAuto", 2)
-    cam.MV_CC_SetEnumValue("GainAuto", 2)
-    cam.MV_CC_SetEnumValue("BalanceWhiteAuto", 2)
+    cam.MV_CC_SetEnumValue("ExposureAuto", 0)
+    cam.MV_CC_SetEnumValue("GainAuto", 0)
+    cam.MV_CC_SetEnumValue("BalanceWhiteAuto", 0)
+
+    cam.MV_CC_SetFloatValue("ExposureTime", 10000.0)   # example
+    cam.MV_CC_SetFloatValue("Gain", 1000.0)              # example
     cam.MV_CC_StartGrabbing()
     cam.MV_CC_SetEnumValue("TriggerMode", 0)
     cam.MV_CC_SetBoolValue("AcquisitionFrameRateEnable", True)
