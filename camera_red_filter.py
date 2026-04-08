@@ -4,7 +4,7 @@ Uses HIKRobot MVS camera; applies gamma 1.2 then tight HSV + env suppression.
 Only red lights visible; ignores background reds and whites (uses image_env1.png).
 Press 'q' to quit.
 """
-
+#a
 import os
 import time
 import ctypes
