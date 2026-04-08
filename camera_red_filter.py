@@ -1,7 +1,7 @@
 """
-Live camera feed with the same best filter logic as camera_blue_filter.py, for red.
-Uses HIKRobot MVS camera; applies gamma 1.2 then best filter (tight HSV + env suppression).
-Only red lights visible; ignores background reds and whites (uses image_env.png).
+Live camera feed with the same best-filter intensity as camera_blue_filter.py, for red.
+Uses HIKRobot MVS camera; applies gamma 1.2 then tight HSV + env suppression.
+Only red lights visible; ignores background reds and whites (uses image_env1.png).
 Press 'q' to quit.
 """
 
@@ -28,24 +28,27 @@ os.environ["PATH"] = dll_dir + ";" + os.environ.get("PATH", "")
 from MVS.MvCameraControl_class import *
 
 
-# Red filter: same structure as blue best filter (tight HSV + env)
-# Red in OpenCV HSV wraps: hue 0–12 (red) and 168–180 (red)
+# Same intensity as camera_blue_filter / filters.py best blue
 GAMMA = 1.2
-BEST_RED_HUE_LOW_MAX = 12
-BEST_RED_HUE_HIGH_MIN = 168
+# Blue uses a single span BEST_HUE_MIN..BEST_HUE_MAX (width 34). Red wraps hue 0/179 in OpenCV.
+RED_HUE_LOW_MIN, RED_HUE_LOW_MAX = 0, 16
+RED_HUE_HIGH_MIN, RED_HUE_HIGH_MAX = 163, 179
 BEST_SAT_MIN, BEST_VAL_MIN = 90, 190
 ENV_V_DELTA = 18
 VAL_ABSOLUTE = 248
-IMAGE_ENV_NAME = "image_env.png"
+IMAGE_ENV_NAME = "image_env1.png"
 
 
 def cam_config(cam: MvCamera, stDevInfo, FPS: float):
     cam.MV_CC_CreateHandle(stDevInfo)
     cam.MV_CC_OpenDevice(MV_ACCESS_Exclusive, 0)
     cam.MV_CC_SetEnumValue("PixelFormat", PixelType_Gvsp_RGB8_Packed)
-    cam.MV_CC_SetEnumValue("ExposureAuto", 2)
-    cam.MV_CC_SetEnumValue("GainAuto", 2)
-    cam.MV_CC_SetEnumValue("BalanceWhiteAuto", 2)
+    cam.MV_CC_SetEnumValue("ExposureAuto", 0)
+    cam.MV_CC_SetEnumValue("GainAuto", 0)
+    cam.MV_CC_SetEnumValue("BalanceWhiteAuto", 0)
+
+    cam.MV_CC_SetFloatValue("ExposureTime", 10000.0)   # example
+    cam.MV_CC_SetFloatValue("Gain", 1000.0)              # example
     cam.MV_CC_StartGrabbing()
     cam.MV_CC_SetEnumValue("TriggerMode", 0)
     cam.MV_CC_SetBoolValue("AcquisitionFrameRateEnable", True)
@@ -53,7 +56,7 @@ def cam_config(cam: MvCamera, stDevInfo, FPS: float):
 
 
 def load_env():
-    """Load image_env.png for background suppression."""
+    """Load image_env1.png for background suppression (same as camera_blue_filter)."""
     base = Path(__file__).resolve().parent
     path = base / IMAGE_ENV_NAME
     if not path.exists():
@@ -70,20 +73,19 @@ def apply_gamma(img_bgr, gamma=GAMMA):
 
 def apply_red_mask_best(img_bgr, img_env_bgr=None):
     """
-    Best filter for red: tight HSV (red wraps at 0 and 180) + require brighter than env.
+    Best filter for red lights: same sat/val/env rules as blue; tight red hue (wraps 0/179).
     Rejects matte red, whites/grays, faint reds; only emissive red lights pass.
     """
     hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
     v_current = hsv[:, :, 2]
-    # Red low: hue 0 .. BEST_RED_HUE_LOW_MAX
-    lower_low = np.array([0, BEST_SAT_MIN, BEST_VAL_MIN])
-    upper_low = np.array([BEST_RED_HUE_LOW_MAX, 255, 255])
-    mask_low = cv2.inRange(hsv, lower_low, upper_low)
-    # Red high: hue BEST_RED_HUE_HIGH_MIN .. 180
-    lower_high = np.array([BEST_RED_HUE_HIGH_MIN, BEST_SAT_MIN, BEST_VAL_MIN])
-    upper_high = np.array([180, 255, 255])
-    mask_high = cv2.inRange(hsv, lower_high, upper_high)
-    mask = cv2.bitwise_or(mask_low, mask_high)
+    lower_lo = np.array([RED_HUE_LOW_MIN, BEST_SAT_MIN, BEST_VAL_MIN])
+    upper_lo = np.array([RED_HUE_LOW_MAX, 255, 255])
+    lower_hi = np.array([RED_HUE_HIGH_MIN, BEST_SAT_MIN, BEST_VAL_MIN])
+    upper_hi = np.array([RED_HUE_HIGH_MAX, 255, 255])
+    mask = cv2.bitwise_or(
+        cv2.inRange(hsv, lower_lo, upper_lo),
+        cv2.inRange(hsv, lower_hi, upper_hi),
+    )
 
     if img_env_bgr is not None:
         if img_env_bgr.shape[:2] != img_bgr.shape[:2]:
@@ -122,7 +124,7 @@ def main():
 
     img_env = load_env()
     if img_env is None:
-        print("image_env.png not found; using best filter without env suppression.")
+        print("image_env1.png not found; using best filter without env suppression.")
 
     t_prev = time.perf_counter()
     while True:
