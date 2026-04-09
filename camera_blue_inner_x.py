@@ -3,11 +3,20 @@ Live camera: same blue pipeline as camera_blue_filter.py, then finds two vertica
 blue rectangles and draws an X whose endpoints are the inner corners (facing each
 other). Prints the intersection of the two X lines to the terminal.
 
+Depth (cm) from camera to the X center uses a pinhole model on the horizontal gap
+between inner vertical edges (no extra image processing):
+
+    Z_cm = (f_x [px] * B [cm]) / gap_px
+
+  Tune constants at the top of this file: INNER_EDGE_SEPARATION_CM, optional
+  DEPTH_CALIB_Z_CM + DEPTH_CALIB_GAP_PX, and DEPTH_FX_PIXELS or
+  DEPTH_HORIZONTAL_FOV_DEG.
+
 Press 'q' to quit.
 """
 
 import ctypes
-import os
+import math
 import sys
 import time
 
@@ -22,6 +31,23 @@ from camera_blue_filter import (
     load_env,
 )
 from MVS.MvCameraControl_class import *
+
+
+# --- depth calibration (edit for your camera / marker layout) ----------------
+
+# Real-world distance (cm) between the inner vertical edges of the two markers.
+INNER_EDGE_SEPARATION_CM = 15.0
+
+# Optional one-shot calibration: at distance DEPTH_CALIB_Z_CM (cm), inner gap was
+# DEPTH_CALIB_GAP_PX (px). Set both numbers, or both None to use f_x * B instead.
+DEPTH_CALIB_Z_CM = None  # e.g. 100.0
+DEPTH_CALIB_GAP_PX = None  # e.g. 320.0
+
+# Horizontal focal length (pixels). If None, computed from DEPTH_HORIZONTAL_FOV_DEG.
+DEPTH_FX_PIXELS = None  # e.g. 850.0
+
+# Full horizontal field of view (degrees); used only when DEPTH_FX_PIXELS is None.
+DEPTH_HORIZONTAL_FOV_DEG = 60.0
 
 
 # --- geometry -----------------------------------------------------------------
@@ -105,6 +131,35 @@ def inner_corners_and_x(left, right):
     return l_top, r_bot, l_bot, r_top, inter
 
 
+def inner_edge_gap_px(left_xywh, right_xywh):
+    """Horizontal pixel distance between inner vertical edges (same geometry as inner_corners_and_x)."""
+    lx, ly, lw, lh = left_xywh
+    rx, ry, rw, rh = right_xywh
+    inner_left = lx + lw - 1
+    inner_right = rx
+    return max(float(inner_right - inner_left), 1.0)
+
+
+def focal_x_pixels(frame_width: int) -> float:
+    """Horizontal focal length in pixels from DEPTH_FX_PIXELS or DEPTH_HORIZONTAL_FOV_DEG."""
+    if DEPTH_FX_PIXELS is not None:
+        return float(DEPTH_FX_PIXELS)
+    h = math.radians(float(DEPTH_HORIZONTAL_FOV_DEG))
+    return (0.5 * float(frame_width)) / math.tan(0.5 * h)
+
+
+def depth_cm_to_x_center(frame_width: int, gap_px: float) -> float:
+    """
+    Z [cm] from camera optical center to the plane of the markers, using inner-edge gap.
+    Uses K = DEPTH_CALIB_Z_CM * DEPTH_CALIB_GAP_PX if both set; else K = f_x * B.
+    """
+    if DEPTH_CALIB_Z_CM is not None and DEPTH_CALIB_GAP_PX is not None:
+        k = float(DEPTH_CALIB_Z_CM) * float(DEPTH_CALIB_GAP_PX)
+    else:
+        k = focal_x_pixels(frame_width) * float(INNER_EDGE_SEPARATION_CM)
+    return k / gap_px
+
+
 def main():
     deviceList = MV_CC_DEVICE_INFO_LIST()
     ret = MvCamera.MV_CC_EnumDevices(MV_USB_DEVICE, deviceList)
@@ -177,9 +232,11 @@ def main():
                     2,
                     cv2.LINE_AA,
                 )
+                gap_px = inner_edge_gap_px(left_r, right_r)
+                z_cm = depth_cm_to_x_center(w, gap_px)
                 cv2.putText(
                     display,
-                    f"({ix:.1f},{iy:.1f})",
+                    f"({ix:.1f},{iy:.1f}) Z~{z_cm:.0f}cm",
                     (int(round(ix)) + 10, int(round(iy)) - 10),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.6,
@@ -189,7 +246,11 @@ def main():
                 )
                 now = time.perf_counter()
                 if now - last_print >= print_interval:
-                    print(f"X intersection (image coords, x y): {ix:.2f} {iy:.2f}")
+                    print(
+                        f"X center (px x y): {ix:.2f} {iy:.2f}  |  "
+                        f"depth (cm, pinhole inner-gap): {z_cm:.2f}  |  "
+                        f"inner gap (px): {gap_px:.1f}"
+                    )
                     last_print = now
             # Optional: rectangle outlines for debugging
             lx, ly, lw, lh = left_r
