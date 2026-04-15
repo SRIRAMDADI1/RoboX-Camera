@@ -73,34 +73,10 @@ def line_intersection(p1, p2, p3, p4):
     return (px, py)
 
 
-def _vertical_overlap_fraction(ly1, lh1, ly2, lh2):
-    """Overlap of two y-intervals as a fraction of the shorter height."""
-    y1_lo, y1_hi = ly1, ly1 + lh1
-    y2_lo, y2_hi = ly2, ly2 + lh2
-    overlap = max(0.0, min(y1_hi, y2_hi) - max(y1_lo, y2_lo))
-    span = min(lh1, lh2)
-    return overlap / max(span, 1e-6)
-
-
-def find_two_vertical_rectangles(
-    bgr_filtered,
-    min_area=400,
-    min_aspect=1.25,
-    min_solidity=0.92,
-    max_candidates=12,
-    min_pair_height_ratio=0.55,
-    min_vertical_overlap=0.45,
-):
+def find_two_vertical_rectangles(bgr_filtered, min_area=400, min_aspect=1.25):
     """
-    From blue-filter output (black background), find two vertical bar markers.
-
-    Corner / L-shaped blobs (one vertical edge fused with an adjacent horizontal
-    edge) still look tall but are not calibrated vertical bars; they have lower
-    solidity (area / convex hull area) than a single bar, so they are dropped.
-
-    Among remaining candidates, picks the left–right pair with best combined area
-    that also has similar bar heights and substantial vertical overlap (same
-    physical target), instead of blindly taking the two largest blobs.
+    From blue-filter output (black background), find the two largest vertical
+    blobs. Returns (left_xywh, right_xywh) as (x, y, w, h) or (None, None).
     """
     gray = cv2.cvtColor(bgr_filtered, cv2.COLOR_BGR2GRAY)
     _, binary = cv2.threshold(gray, 1, 255, cv2.THRESH_BINARY)
@@ -116,50 +92,19 @@ def find_two_vertical_rectangles(
             continue
         if h / float(w) < min_aspect:
             continue
-        hull = cv2.convexHull(c)
-        hull_a = cv2.contourArea(hull)
-        if hull_a < 1e-6:
-            continue
-        if a / hull_a < min_solidity:
-            continue
         cx = x + w * 0.5
-        candidates.append({"area": a, "cx": cx, "xywh": (x, y, w, h)})
+        candidates.append((a, cx, (x, y, w, h)))
 
     if len(candidates) < 2:
         return None, None
 
-    candidates.sort(key=lambda d: d["area"], reverse=True)
-    candidates = candidates[:max_candidates]
-
-    best_left, best_right = None, None
-    best_score = -1.0
-    n = len(candidates)
-    for i in range(n):
-        for j in range(n):
-            if i == j:
-                continue
-            A, B = candidates[i], candidates[j]
-            if A["cx"] >= B["cx"]:
-                continue
-            left, right = A, B
-            _, ly, _, lh = left["xywh"]
-            _, ry, _, rh = right["xywh"]
-            hratio = min(lh, rh) / max(float(lh), float(rh))
-            if hratio < min_pair_height_ratio:
-                continue
-            ov = _vertical_overlap_fraction(ly, lh, ry, rh)
-            if ov < min_vertical_overlap:
-                continue
-            score = float(left["area"] + right["area"]) + 2000.0 * ov
-            if score > best_score:
-                best_score = score
-                best_left, best_right = left["xywh"], right["xywh"]
-
-    if best_left is not None:
-        return best_left, best_right
-
-    # No pair passed geometry: do not fall back to ambiguous largest blobs (bad depth).
-    return None, None
+    candidates.sort(key=lambda t: t[0], reverse=True)
+    # Two largest vertical blobs; if more than two, take top two by area
+    top = candidates[:2]
+    top.sort(key=lambda t: t[1])
+    _, _, left = top[0]
+    _, _, right = top[1]
+    return left, right
 
 
 def inner_corners_and_x(left, right):
