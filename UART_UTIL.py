@@ -73,6 +73,7 @@ def send_data(ser, hex_Yaw, hex_Pitch, checksum, detect_success: bool):
     packet_bytes = bytes.fromhex(packet)
     # Write the bytes to the serial port
     ser.write(packet_bytes)
+    print("AAAAAA")
 
 
 def get_imu(ser):
