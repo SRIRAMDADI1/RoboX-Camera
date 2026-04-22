@@ -13,13 +13,17 @@ between inner vertical edges (no extra image processing):
   DEPTH_HORIZONTAL_FOV_DEG.
 
 Press 'q' to quit.
+
+Robot UART (optional): set env ROBOX_SERIAL_PORT (e.g. COM3) and optionally
+ROBOX_SERIAL_BAUD (default 115200). Throttled packets send yaw/pitch relative to
+the camera (from the X intersection) via UART_UTIL.send_data, plus detect flag.
 """
 
 import ctypes
 import math
 import sys
 import time
-from UART_UTIL import send_data, get_imu
+
 import cv2
 import numpy as np
 
@@ -31,6 +35,8 @@ from camera_red_filter import (
     load_env,
 )
 from MVS.MvCameraControl_class import *
+
+from UART_UTIL import open_robot_serial, send_target_angles_deg
 
 
 # --- depth calibration (edit for your camera / marker layout) ----------------
@@ -48,6 +54,10 @@ DEPTH_FX_PIXELS = None  # e.g. 850.0
 
 # Full horizontal field of view (degrees); used only when DEPTH_FX_PIXELS is None.
 DEPTH_HORIZONTAL_FOV_DEG = 60.0
+
+# Vertical focal length / FOV for pitch. If None, assumes square pixels: f_y = f_x * (H / W).
+DEPTH_FY_PIXELS = None  # e.g. 720.0
+DEPTH_VERTICAL_FOV_DEG = None  # e.g. 45.0; used only when DEPTH_FY_PIXELS is None
 
 
 # --- geometry -----------------------------------------------------------------
@@ -147,6 +157,38 @@ def focal_x_pixels(frame_width: int) -> float:
     h = math.radians(float(DEPTH_HORIZONTAL_FOV_DEG))
     return (0.5 * float(frame_width)) / math.tan(0.5 * h)
 
+def focal_y_pixels(frame_height: int, frame_width: int) -> float:
+    """Vertical focal length in pixels; square-pixel default uses f_x * (H / W)."""
+    if DEPTH_FY_PIXELS is not None:
+        return float(DEPTH_FY_PIXELS)
+    if DEPTH_VERTICAL_FOV_DEG is not None:
+        v = math.radians(float(DEPTH_VERTICAL_FOV_DEG))
+        return (0.5 * float(frame_height)) / math.tan(0.5 * v)
+    return focal_x_pixels(frame_width) * (float(frame_height) / float(max(frame_width, 1)))
+
+
+def yaw_pitch_deg_from_image_point(
+    ix: float,
+    iy: float,
+    frame_width: int,
+    frame_height: int,
+) -> tuple[float, float]:
+    """
+    Pan/tilt of the target relative to the camera optical axis (pinhole model).
+    Image x increases to the right -> positive yaw (object to the right of center).
+    Image y increases downward -> positive pitch (object below center).
+    Principal point at image center.
+    """
+    fx = focal_x_pixels(frame_width)
+    fy = focal_y_pixels(frame_height, frame_width)
+    cx = 0.5 * float(frame_width)
+    cy = 0.5 * float(frame_height)
+    dx = ix - cx
+    dy = iy - cy
+    yaw_deg = math.degrees(math.atan2(dx, fx))
+    pitch_deg = math.degrees(math.atan2(dy, fy))
+    return yaw_deg, pitch_deg
+
 
 def depth_cm_to_x_center(frame_width: int, gap_px: float) -> float:
     """
@@ -183,9 +225,19 @@ def main():
     if img_env is None:
         print("image_env1.png not found; using best filter without env suppression.")
 
+    ser = open_robot_serial()
+    if ser is None:
+        print(
+            "UART disabled (set ROBOX_SERIAL_PORT, e.g. COM3, to send yaw/pitch to the robot).",
+            file=sys.stderr,
+        )
+    else:
+        print(f"UART open: {ser.port!s} @ {ser.baudrate}", file=sys.stderr)
+
     t_prev = time.perf_counter()
     print_interval = 0.25
     last_print = 0.0
+    last_uart = 0.0
 
     while True:
         ret = cam.MV_CC_GetOneFrameTimeout(data_buf, payload_size, stFrameInfo, 1000)
@@ -201,6 +253,9 @@ def main():
 
         left_r, right_r = find_two_vertical_rectangles(out)
         display = out.copy()
+
+        detect_ok = False
+        yaw_deg, pitch_deg = 0.0, 0.0
 
         if left_r is not None and right_r is not None:
             l_top, r_bot, l_bot, r_top, inter = inner_corners_and_x(left_r, right_r)
@@ -224,6 +279,8 @@ def main():
             )
             if inter is not None:
                 ix, iy = inter
+                yaw_deg, pitch_deg = yaw_pitch_deg_from_image_point(ix, iy, w, h)
+                detect_ok = True
                 cv2.circle(
                     display,
                     (int(round(ix)), int(round(iy))),
@@ -236,7 +293,7 @@ def main():
                 z_cm = depth_cm_to_x_center(w, gap_px)
                 cv2.putText(
                     display,
-                    f"({ix:.1f},{iy:.1f}) Z~{z_cm:.0f}cm",
+                    f"({ix:.1f},{iy:.1f}) Z~{z_cm:.0f}cm  Y{yaw_deg:+.1f} P{pitch_deg:+.1f}",
                     (int(round(ix)) + 10, int(round(iy)) - 10),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.6,
@@ -249,7 +306,8 @@ def main():
                     print(
                         f"X center (px x y): {ix:.2f} {iy:.2f}  |  "
                         f"depth (cm, pinhole inner-gap): {z_cm:.2f}  |  "
-                        f"inner gap (px): {gap_px:.1f}"
+                        f"inner gap (px): {gap_px:.1f}  |  "
+                        f"yaw {yaw_deg:+.2f} deg  pitch {pitch_deg:+.2f} deg (camera frame)"
                     )
                     last_print = now
             # Optional: rectangle outlines for debugging
@@ -257,6 +315,11 @@ def main():
             rx, ry, rw, rh = right_r
             cv2.rectangle(display, (lx, ly), (lx + lw - 1, ly + lh - 1), (0, 200, 0), 1)
             cv2.rectangle(display, (rx, ry), (rx + rw - 1, ry + rh - 1), (0, 200, 0), 1)
+
+        now_uart = time.perf_counter()
+        if ser is not None and (now_uart - last_uart) >= print_interval:
+            send_target_angles_deg(ser, yaw_deg, pitch_deg, detect_ok)
+            last_uart = now_uart
 
         t_now = time.perf_counter()
         fps = 1.0 / (t_now - t_prev) if t_now > t_prev else 0.0
@@ -270,6 +333,8 @@ def main():
     cam.MV_CC_StopGrabbing()
     cam.MV_CC_CloseDevice()
     cam.MV_CC_DestroyHandle()
+    if ser is not None:
+        ser.close()
     cv2.destroyAllWindows()
 
 

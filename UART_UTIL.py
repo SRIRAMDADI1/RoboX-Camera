@@ -1,6 +1,57 @@
-import serial
-import time
+import os
 import re
+import struct
+import sys
+import time
+from typing import Optional, Tuple
+
+import serial
+
+
+def encode_yaw_pitch_checksum(yaw_deg: float, pitch_deg: float) -> Tuple[str, str, str]:
+    """
+    Build hex strings for send_data: signed yaw/pitch in centidegrees (0.01°),
+    little-endian int16 each (4 hex chars), plus 1-byte XOR checksum over those 4 bytes.
+
+    Adjust scaling here if the robot firmware expects a different angle format.
+    """
+    y = int(round(float(yaw_deg) * 100.0))
+    p = int(round(float(pitch_deg) * 100.0))
+    y = max(-32768, min(32767, y))
+    p = max(-32768, min(32767, p))
+    payload = struct.pack("<hh", y, p)
+    hex_yaw = payload[:2].hex()
+    hex_pitch = payload[2:].hex()
+    cs = 0
+    for b in payload:
+        cs ^= b
+    return hex_yaw, hex_pitch, f"{cs:02x}"
+
+
+def send_target_angles_deg(ser, yaw_deg: float, pitch_deg: float, detect_success: bool) -> None:
+    """Encode camera-relative angles and transmit one packet."""
+    hy, hp, cs = encode_yaw_pitch_checksum(yaw_deg, pitch_deg)
+    send_data(ser, hy, hp, cs, detect_success)
+
+
+def open_robot_serial(
+    port: Optional[str] = None,
+    baud: Optional[int] = None,
+    timeout: float = 0.05,
+) -> Optional[serial.Serial]:
+    """
+    Open the UART used by send_data. Port defaults to env ROBOX_SERIAL_PORT; if unset,
+    returns None (camera scripts can run without hardware).
+    """
+    p = port if port is not None else os.environ.get("ROBOX_SERIAL_PORT", "").strip()
+    if not p:
+        return None
+    b = baud if baud is not None else int(os.environ.get("ROBOX_SERIAL_BAUD", "115200"))
+    try:
+        return serial.Serial(p, b, timeout=timeout)
+    except (serial.SerialException, OSError, ValueError) as e:
+        print(f"UART open failed ({p!r}): {e}", file=sys.stderr)
+        return None
 
 
 # Angles are in Byte Format
