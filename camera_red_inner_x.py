@@ -238,11 +238,15 @@ def main():
     print_interval = 0.25
     last_print = 0.0
     last_uart = 0.0
+    total_frames = 0
+    hits = 0
 
     while True:
         ret = cam.MV_CC_GetOneFrameTimeout(data_buf, payload_size, stFrameInfo, 1000)
         if ret != 0:
             continue
+
+        total_frames += 1
 
         w, h = stFrameInfo.nWidth, stFrameInfo.nHeight
         img_rgb = np.frombuffer(data_buf, dtype=np.uint8, count=w * h * 3).reshape(h, w, 3)
@@ -259,7 +263,6 @@ def main():
 
         if left_r is not None and right_r is not None:
             l_top, r_bot, l_bot, r_top, inter = inner_corners_and_x(left_r, right_r)
-            # X lines (cyan), slightly thick
             col = (255, 255, 0)
             cv2.line(
                 display,
@@ -281,6 +284,7 @@ def main():
                 ix, iy = inter
                 yaw_deg, pitch_deg = yaw_pitch_deg_from_image_point(ix, iy, w, h)
                 detect_ok = True
+                hits += 1
                 cv2.circle(
                     display,
                     (int(round(ix)), int(round(iy))),
@@ -301,7 +305,7 @@ def main():
                     2,
                     cv2.LINE_AA,
                 )
-                power_watts = 0.0  # replace with real power measurement
+                power_watts = 0.0
                 now = time.perf_counter()
                 if now - last_print >= print_interval:
                     print(
@@ -311,7 +315,6 @@ def main():
                         f"power {power_watts:.2f} W"
                     )
                     last_print = now
-            # Optional: rectangle outlines for debugging
             lx, ly, lw, lh = left_r
             rx, ry, rw, rh = right_r
             cv2.rectangle(display, (lx, ly), (lx + lw - 1, ly + lh - 1), (0, 200, 0), 1)
@@ -325,7 +328,19 @@ def main():
         t_now = time.perf_counter()
         fps = 1.0 / (t_now - t_prev) if t_now > t_prev else 0.0
         t_prev = t_now
+
+        hit_pct = 100.0 * hits / total_frames if total_frames else 0.0
         cv2.putText(display, f"{fps:.1f} FPS", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
+        cv2.putText(
+            display,
+            f"Hit {hit_pct:.1f}% ({hits}/{total_frames})",
+            (10, 60),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            (0, 255, 0),
+            2,
+            cv2.LINE_AA,
+        )
 
         cv2.imshow("Red filter + inner X — Live", display)
         if cv2.waitKey(1) & 0xFF == ord("q"):
