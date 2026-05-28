@@ -301,13 +301,14 @@ def main():
                     2,
                     cv2.LINE_AA,
                 )
+                power_watts = 0.0  # replace with real power measurement
                 now = time.perf_counter()
                 if now - last_print >= print_interval:
                     print(
-                        f"X center (px x y): {ix:.2f} {iy:.2f}  |  "
-                        f"depth (cm, pinhole inner-gap): {z_cm:.2f}  |  "
-                        f"inner gap (px): {gap_px:.1f}  |  "
-                        f"yaw {yaw_deg:+.2f} deg  pitch {pitch_deg:+.2f} deg (camera frame)"
+                        f"yaw {yaw_deg:+.2f}°  "
+                        f"pitch {pitch_deg:+.2f}°  "
+                        f"distance {z_cm:.2f} cm  "
+                        f"power {power_watts:.2f} W"
                     )
                     last_print = now
             # Optional: rectangle outlines for debugging
